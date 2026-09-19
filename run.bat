@@ -25,6 +25,31 @@ if errorlevel 1 (
 )
 
 echo.
+echo Synchronizuje z git (add + commit + push)...
+git rev-parse --is-inside-work-tree >nul 2>nul
+if errorlevel 1 (
+    echo To nie jest repozytorium git - pomijam synchronizacje.
+) else (
+    git add -A
+    git diff --cached --quiet
+    if errorlevel 1 (
+        git commit -m "Auto-commit z run.bat: %DATE% %TIME%" >nul
+        echo Zacommitowano lokalnie, pushuje...
+        git push
+        if errorlevel 1 (
+            echo OSTRZEZENIE: git push nie powiodl sie - sprawdz polaczenie z internetem
+            echo i czy jestes zalogowany do GitHub ^(np. przez Git Credential Manager^).
+            echo Dashboard i tak dzialac bedzie lokalnie, tylko zmiany zostana
+            echo niewypchniete.
+        ) else (
+            echo Wypchniete na GitHub.
+        )
+    ) else (
+        echo Brak lokalnych zmian do zacommitowania - pomijam.
+    )
+)
+
+echo.
 echo Uruchamiam serwer TIMDR-Mold-Risk w osobnym oknie...
 start "TIMDR-Mold-Risk API" cmd /k python api.py
 
