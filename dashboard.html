@@ -279,7 +279,11 @@
     </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<!-- Chart.js zwendorowane lokalnie w static/chart.umd.js (v4.4.3, MIT) -
+     celowo BEZ CDN, zeby dashboard dzialal offline i nie zalezal od
+     tego, czy siec/firewall/antywirus przepuszcza cdnjs.cloudflare.com
+     (to wlasnie zepsulo pierwsza wersje - "Chart is not defined"). -->
+<script src="/static/chart.umd.js"></script>
 <script>
 (function(){
     "use strict";
