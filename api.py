@@ -7,6 +7,15 @@ Serwer Flask udostepniajacy:
   GET  /api/demo          -> syntetyczny zestaw danych (?scenario=<nazwa>)
   POST /api/analyze       -> pelna analiza TIMDR (fuse + twist/trend/anomalies/rhythm
                               + time_to_visible_growth/health_score)
+  POST /api/ble/start, POST /api/ble/stop, GET /api/ble/status, GET /api/ble/live
+                           -> czujnik Bluetooth na zywo (patrz ble_sensor.py)
+  POST /api/ha/ingest, GET /api/ha/status, POST /api/ha/reset
+                           -> most do Home Assistant (patrz README.md,
+                              sekcja "Integracja z Home Assistant") - HA samo
+                              czyta sensor swoja wbudowana integracja "Xiaomi
+                              BLE" i PUSHuje odczyty tutaj przez automatyzacje +
+                              rest_command; RESTful sensor w HA czyta wynik z
+                              /api/ha/status z powrotem jako encje HA.
 
 Uruchomienie: `python api.py`, potem http://127.0.0.1:5002 .
 
@@ -46,6 +55,58 @@ ble_buffer = LiveReadingBuffer()
 _ble_thread = None
 _ble_stop_event = threading.Event()
 
+# --- Most do Home Assistant: HA samo czyta sensor (integracja "Xiaomi BLE"),
+# a swoja automatyzacja PUSHuje odczyty tutaj (POST /api/ha/ingest). Osobny
+# bufor niz ble_buffer, bo to inne zrodlo danych (nie ten sam proces skanuje).
+ha_buffer = LiveReadingBuffer()
+
+
+def _run_full_analysis(t, temperature, humidity, vulnerability_class="bardzo_wrazliwy",
+                        threshold=3.0, window_hours=168):
+    """Wspolna logika analizy TIMDR, uzywana zarowno przez POST /api/analyze
+    (surowe dane w body), jak i GET /api/ha/status (dane z ha_buffer) - zeby
+    nie utrzymywac dwoch kopii tej samej logiki fuse/twist/trend/anomalies/
+    rhythm/fusion_score/predict."""
+    local_fusion = TIMDRMoldFusion(vulnerability_class=vulnerability_class)
+    E, margin = local_fusion.fuse(t, temperature, humidity)
+    tw_idx, tw_z = local_fusion.twist(t, E)
+    tr_sl, tr_z = local_fusion.trend(t, E, window=min(window_hours, max(2, len(t))))
+    an_idx, an_z = local_fusion.anomalies(E)
+    periods, r_score = local_fusion.rhythm(E)
+    score = local_fusion.fusion_score(tw_z, tr_z, an_z, r_score)
+
+    ttg = predict.time_to_visible_growth(t, E, threshold=threshold, window_hours=window_hours)
+    health = predict.health_score(E, threshold=threshold)
+    level, label = risk_level_label(E[-1]) if len(E) else (0, "brak danych")
+
+    def clean(x):
+        if x is None:
+            return None
+        x = float(x)
+        return None if not np.isfinite(x) else x
+
+    def clean_list(x):
+        return [clean(v) for v in np.asarray(x, float)]
+
+    return {
+        "t_hours": np.asarray(t, float).tolist(),
+        "M": clean_list(E),
+        "margin": clean_list(margin),
+        "twist_idx": tw_idx.tolist(),
+        "trend_slopes": clean_list(tr_sl),
+        "anomaly_idx": an_idx.tolist(),
+        "rhythm_periods": periods,
+        "rhythm_score": clean(r_score),
+        "fusion_score": clean(score),
+        "time_to_visible_growth_hours": clean(ttg) if ttg != np.inf else None,
+        "health_score": clean(health),
+        "current_risk_level": level,
+        "current_risk_label": label,
+        "vulnerability_class": vulnerability_class,
+        "threshold": threshold,
+        "window_hours": window_hours,
+    }
+
 
 def _ble_thread_target():
     loop = asyncio.new_event_loop()
@@ -66,6 +127,7 @@ def index():
             "/dashboard",
             "/api/health", "/api/scenarios", "/api/demo", "/api/analyze (POST)",
             "/api/ble/start (POST)", "/api/ble/stop (POST)", "/api/ble/status", "/api/ble/live",
+            "/api/ha/ingest (POST)", "/api/ha/status", "/api/ha/reset (POST)",
         ],
     })
 
@@ -201,47 +263,115 @@ def api_analyze():
     window_hours = int(body.get("window_hours", 168))
 
     try:
-        local_fusion = TIMDRMoldFusion(vulnerability_class=vulnerability_class)
-        E, margin = local_fusion.fuse(t, temperature, humidity)
-        tw_idx, tw_z = local_fusion.twist(t, E)
-        tr_sl, tr_z = local_fusion.trend(t, E, window=min(window_hours, max(2, len(t))))
-        an_idx, an_z = local_fusion.anomalies(E)
-        periods, r_score = local_fusion.rhythm(E)
-        score = local_fusion.fusion_score(tw_z, tr_z, an_z, r_score)
-
-        ttg = predict.time_to_visible_growth(t, E, threshold=threshold, window_hours=window_hours)
-        health = predict.health_score(E, threshold=threshold)
-        level, label = risk_level_label(E[-1]) if len(E) else (0, "brak danych")
-    except (KeyError, Exception) as exc:  # noqa: BLE001
+        result = _run_full_analysis(t, temperature, humidity, vulnerability_class, threshold, window_hours)
+    except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"blad analizy: {exc}"}), 400
 
-    def clean(x):
-        if x is None:
-            return None
-        x = float(x)
-        return None if not np.isfinite(x) else x
+    return jsonify(result)
 
-    def clean_list(x):
-        return [clean(v) for v in np.asarray(x, float)]
+
+# --- Most do Home Assistant --------------------------------------------
+#
+# HA CZYTA sensor samo (wbudowana integracja "Xiaomi BLE" dla custom
+# firmware pvvx/ATC - nie potrzeba tu bleak/ble_sensor.py wcale, bo HA
+# juz ma dostep do adaptera Bluetooth). Automatyzacja w HA PUSHuje kazdy
+# nowy odczyt T/RH tutaj (POST /api/ha/ingest), a RESTful sensor w HA
+# okresowo czyta wynik analizy z powrotem (GET /api/ha/status) jako
+# zwykle encje HA. Pelna konfiguracja YAML: README.md, sekcja
+# "Integracja z Home Assistant".
+
+_EMPTY_HA_STATUS = {
+    "readings_count": 0,
+    "current_risk_level": 0,
+    "current_risk_label": "brak danych - czekam na odczyty z Home Assistant",
+    "M": None,
+    "margin": None,
+    "health_score": 1.0,
+    "time_to_visible_growth_hours": None,
+    "fusion_score": 0.0,
+    "last_temperature": None,
+    "last_humidity": None,
+}
+
+
+@app.route("/api/ha/ingest", methods=["POST"])
+def api_ha_ingest():
+    """Body (JSON): {"temperature": float, "humidity": float, "timestamp": opcjonalnie}
+    `timestamp` moze byc unix-epoch (sekundy, liczba) albo ISO8601 string
+    (np. to, co HA daje w `{{ now().isoformat() }}`) - jesli brak, uzywany
+    jest czas serwera w momencie wywolania."""
+    body = request.get_json(force=True, silent=True) or {}
+    missing = [f for f in REQUIRED_FIELDS if f not in body]
+    if missing:
+        return jsonify({"error": f"brakujace pola: {missing}"}), 400
+
+    try:
+        temperature = float(body["temperature"])
+        humidity = float(body["humidity"])
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": f"niepoprawne dane wejsciowe: {exc}"}), 400
+
+    unix_time = None
+    ts = body.get("timestamp")
+    if ts is not None:
+        try:
+            unix_time = float(ts)
+        except (TypeError, ValueError):
+            try:
+                import datetime
+                s = str(ts).replace("Z", "+00:00")
+                unix_time = datetime.datetime.fromisoformat(s).timestamp()
+            except ValueError:
+                return jsonify({"error": f"nie rozumiem formatu timestamp: {ts!r}"}), 400
+
+    ha_buffer.add(temperature, humidity, mac="home-assistant", unix_time=unix_time)
+    return jsonify({"status": "ok", "readings_count": len(ha_buffer.readings)})
+
+
+@app.route("/api/ha/status")
+def api_ha_status():
+    """Zwraca ZAWSZE ten sam ksztalt JSON (nawet przy braku danych), zeby
+    RESTful sensor w Home Assistant nie wywalal sie na brakujacych kluczach.
+    Parametry query (opcjonalne): vulnerability_class, threshold, window_hours."""
+    t_hours, temps, hums = ha_buffer.as_series()
+    if len(t_hours) < 3:
+        resp = dict(_EMPTY_HA_STATUS)
+        resp["readings_count"] = len(t_hours)
+        if temps:
+            resp["last_temperature"] = temps[-1]
+            resp["last_humidity"] = hums[-1]
+        return jsonify(resp)
+
+    vulnerability_class = request.args.get("vulnerability_class", "bardzo_wrazliwy")
+    threshold = float(request.args.get("threshold", 3.0))
+    window_hours = int(request.args.get("window_hours", 168))
+
+    try:
+        result = _run_full_analysis(t_hours, temps, hums, vulnerability_class, threshold, window_hours)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"blad analizy: {exc}"}), 400
 
     return jsonify({
-        "t_hours": t.tolist(),
-        "M": clean_list(E),
-        "margin": clean_list(margin),
-        "twist_idx": tw_idx.tolist(),
-        "trend_slopes": clean_list(tr_sl),
-        "anomaly_idx": an_idx.tolist(),
-        "rhythm_periods": periods,
-        "rhythm_score": clean(r_score),
-        "fusion_score": clean(score),
-        "time_to_visible_growth_hours": clean(ttg) if ttg != np.inf else None,
-        "health_score": clean(health),
-        "current_risk_level": level,
-        "current_risk_label": label,
-        "vulnerability_class": vulnerability_class,
-        "threshold": threshold,
-        "window_hours": window_hours,
+        "readings_count": len(t_hours),
+        "current_risk_level": result["current_risk_level"],
+        "current_risk_label": result["current_risk_label"],
+        "M": result["M"][-1] if result["M"] else None,
+        "margin": result["margin"][-1] if result["margin"] else None,
+        "health_score": result["health_score"],
+        "time_to_visible_growth_hours": result["time_to_visible_growth_hours"],
+        "fusion_score": result["fusion_score"],
+        "last_temperature": temps[-1],
+        "last_humidity": hums[-1],
     })
+
+
+@app.route("/api/ha/reset", methods=["POST"])
+def api_ha_reset():
+    """Czysci bufor odczytow z Home Assistant (np. po usunieciu przyczyny
+    wilgoci - zeby zaczac liczenie M(t) od zera zamiast dalej integrowac
+    stary, juz nieaktualny sygnal)."""
+    ha_buffer.clear()
+    return jsonify({"status": "ok"})
 
 
 if __name__ == "__main__":

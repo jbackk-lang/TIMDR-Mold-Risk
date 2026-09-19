@@ -248,6 +248,108 @@ faktycznie zweryfikowana na sprzęcie i kiedy — ten sam wzorzec uczciwości
 co reszta tego repo (patrz sekcja "Walidacja na PRAWDZIWYCH danych
 DALTON" wyżej).
 
+## Integracja z Home Assistant
+
+Architektura: **HA samo czyta czujnik** swoją wbudowaną integracją
+"Xiaomi BLE" (Ustawienia → Urządzenia i usługi → Dodaj integrację →
+"Xiaomi BLE" — wymaga hosta HA z adapterem Bluetooth albo proxy
+ESPHome; działa z tym samym custom firmware pvvx/ATC co zakładka "Czujnik
+na żywo" w dashboardzie, więc **`ble_sensor.py`/`bleak` nie są tu wcale
+potrzebne** — HA i tak robi to lepiej: retry, historia, wiele czujników
+naraz). Automatyzacja w HA **wysyła** (push) każdy odczyt do nowego
+endpointu `/api/ha/ingest`, a **RESTful sensor** w HA okresowo **czyta z
+powrotem** wynik analizy z `/api/ha/status` jako zwykłe encje HA.
+
+**UWAGA UCZCIWOŚCI: poniższy YAML nie został przetestowany na prawdziwej
+instancji Home Assistant** — w tym środowisku nie ma jej do dyspozycji.
+Sama logika API (`/api/ha/ingest`, `/api/ha/status`, `/api/ha/reset`)
+JEST przetestowana (patrz `test_api.py`, testy `test_ha_*` — 35/35
+testów przechodzi), ale składnia YAML HA poniżej to standardowy wzorzec
+`rest_command`/`sensor: platform: rest` z dokumentacji HA, przepisany z
+pamięci — sprawdź numerację wcięć i nazwy encji (`sensor.XXX_temperature`
+zależą od Twojej konkretnej integracji Xiaomi BLE) przed wklejeniem.
+
+W `configuration.yaml` (zamień `192.168.1.50` na IP komputera, na którym
+działa `python api.py`, i nazwy encji na swoje — sprawdzisz je w
+Ustawienia → Urządzenia i usługi → Encje):
+
+```yaml
+rest_command:
+  timdr_mold_ingest:
+    url: "http://192.168.1.50:5002/api/ha/ingest"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {"temperature": {{ states('sensor.lywsd03mmc_temperature') }},
+       "humidity": {{ states('sensor.lywsd03mmc_humidity') }},
+       "timestamp": {{ now().timestamp() }}}
+
+automation:
+  - alias: "TIMDR Mold Risk - wyslij odczyt do api.py"
+    trigger:
+      - platform: time_pattern
+        minutes: "/15"    # co 15 min - nie na kazda mikro-zmiane BLE
+    condition:
+      - condition: template
+        value_template: >-
+          {{ states('sensor.lywsd03mmc_temperature') not in ['unknown','unavailable']
+             and states('sensor.lywsd03mmc_humidity') not in ['unknown','unavailable'] }}
+    action:
+      - service: rest_command.timdr_mold_ingest
+
+  - alias: "TIMDR Mold Risk - alert przy podwyzszonym ryzyku"
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.timdr_mold_risk
+        attribute: current_risk_level
+        above: 2
+    action:
+      - service: notify.notify   # podmien na wlasny notify.* (np. mobile_app)
+        data:
+          title: "Ryzyko plesni"
+          message: >-
+            Poziom {{ state_attr('sensor.timdr_mold_risk', 'current_risk_level') }} -
+            {{ state_attr('sensor.timdr_mold_risk', 'current_risk_label') }}
+
+sensor:
+  - platform: rest
+    name: "TIMDR Mold Risk"
+    resource: "http://192.168.1.50:5002/api/ha/status"
+    method: GET
+    scan_interval: 900   # 15 min - zgodne z czestotliwoscia automatyzacji wyzej
+    value_template: "{{ value_json.current_risk_label }}"
+    json_attributes:
+      - readings_count
+      - current_risk_level
+      - M
+      - margin
+      - health_score
+      - time_to_visible_growth_hours
+      - fusion_score
+      - last_temperature
+      - last_humidity
+
+template:
+  - sensor:
+      - name: "Ryzyko plesni - dni do widocznego wzrostu"
+        unit_of_measurement: "dni"
+        state: >-
+          {% set h = state_attr('sensor.timdr_mold_risk', 'time_to_visible_growth_hours') %}
+          {{ (h / 24) | round(1) if h is not none else 'brak wzrostu w oknie' }}
+      - name: "Ryzyko plesni - health score"
+        unit_of_measurement: "%"
+        state: >-
+          {% set s = state_attr('sensor.timdr_mold_risk', 'health_score') %}
+          {{ (s * 100) | round(0) if s is not none else 'brak danych' }}
+```
+
+Po zrestartowaniu HA (Deweloperskie narzędzia → YAML → Przeładuj
+wszystkie pliki YAML, albo pełny restart) powinny pojawić się encje
+`sensor.timdr_mold_risk` (z atrybutami powyżej) oraz dwie encje
+pomocnicze `template`. `POST /api/ha/reset` (np. przez
+`rest_command`/skrypt HA) czyści bufor po usunięciu przyczyny wilgoci,
+żeby `M(t)` liczyło się od zera zamiast dalej integrować stary sygnał.
+
 ## Struktura
 
 ```
@@ -258,6 +360,12 @@ TIMDR-Mold-Risk/
 ├── real_dalton_test.py        — walidacja na realnych danych DALTON (do uruchomienia przez usera)
 ├── test_timdr_mold_fusion.py  — 7 testow jednostkowych rownania VTT
 ├── test_demo_scenarios.py     — 8 testow scenariuszy (kontrole pozytywne/negatywne + ograniczenia)
-├── api.py                     — REST API (Flask)
+├── api.py                     — REST API (Flask): /api/analyze, /api/ble/*, /api/ha/*, /dashboard
+├── ble_sensor.py               — czujnik BLE na zywo (Xiaomi LYWSD03MMC, custom firmware pvvx/atc1441)
+├── dashboard.html              — panel w przegladarce (4 scenariusze + BLE na zywo), Chart.js zwendorowany lokalnie
+├── static/chart.umd.js         — Chart.js v4.4.3 (MIT) zwendorowany lokalnie, bez CDN
+├── test_ble_sensor.py          — 9 testow parsera BLE (self-consistency, NIE na prawdziwym sprzecie)
+├── test_api.py                 — 11 testow integracyjnych api.py (Flask test client, w tym /api/ha/*)
+├── run.bat                     — instaluje zaleznosci, startuje api.py, otwiera dashboard (Windows)
 ├── requirements.txt, LICENSE, .gitignore
 ```

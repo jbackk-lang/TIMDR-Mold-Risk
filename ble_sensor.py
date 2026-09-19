@@ -110,13 +110,21 @@ class LiveReadingBuffer:
         self.last_error = None
         self.target_mac = None  # jesli ustawione: ignoruj odczyty z innych MAC-ow
 
-    def add(self, temperature, humidity, mac):
+    def add(self, temperature, humidity, mac, unix_time=None):
         if self.target_mac and mac.lower() != self.target_mac.lower():
             return
-        now = time.time()
-        if self.start_t is None:
+        now = unix_time if unix_time is not None else time.time()
+        if self.start_t is None or now < self.start_t:
             self.start_t = now
         self.readings.append((now, temperature, humidity, mac))
+        # utrzymuj kolejnosc rosnaca wzgledem czasu - odczyty spoza BLE
+        # (np. z Home Assistant) moga przyjsc z opoznieniem/asynchronicznie
+        self.readings = deque(sorted(self.readings, key=lambda r: r[0]), maxlen=self.readings.maxlen)
+
+    def clear(self):
+        self.readings.clear()
+        self.start_t = None
+        self.last_error = None
 
     def as_series(self):
         """Zwraca (t_hours, temperature, humidity) wzgledem pierwszego
