@@ -245,4 +245,8 @@ def api_analyze():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5002, debug=False)
+    # threaded=True: kazde zadanie HTTP w wlasnym watku, zeby ewentualne
+    # zawieszenie skanowania BLE (np. systemowy monit Windows o pozwolenie
+    # na Bluetooth) NIE blokowalo reszty API (wykresow scenariuszy demo,
+    # ktore z BLE nie maja nic wspolnego).
+    app.run(host="127.0.0.1", port=5002, debug=False, threaded=True)

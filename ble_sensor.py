@@ -159,12 +159,30 @@ async def scan_forever(buffer: LiveReadingBuffer, stop_event=None, on_reading=No
             on_reading(reading)
 
     scanner = BleakScanner(_callback)
-    await scanner.start()
+    try:
+        # Timeout na starcie: na Windows pierwsze uzycie BLE z aplikacji
+        # spoza Microsoft Store potrafi pokazac systemowy monit o
+        # pozwolenie (Ustawienia > Prywatnosc > Bluetooth) lub po prostu
+        # zawiesic sie, gdy adapter Bluetooth jest wylaczony/niedostepny -
+        # bez timeoutu ten watek (i cala funkcja skanowania) wisialby
+        # w nieskonczonosc, bez zadnej informacji zwrotnej w dashboardzie.
+        await asyncio.wait_for(scanner.start(), timeout=15.0)
+    except Exception as exc:  # noqa: BLE001 - musi przezyc kazdy blad startu adaptera
+        buffer.last_error = (
+            f"nie udalo sie uruchomic skanowania BLE w 15s: {exc}. "
+            f"Sprawdz: czy Bluetooth jest wlaczony w Windows, czy nie "
+            f"pojawilo sie okienko z prosba o pozwolenie (czasem chowa sie "
+            f"za innymi oknami - Alt+Tab), i czy masz zainstalowany 'bleak'."
+        )
+        return
     try:
         while not (stop_event and stop_event.is_set()):
             await asyncio.sleep(1.0)
     finally:
-        await scanner.stop()
+        try:
+            await asyncio.wait_for(scanner.stop(), timeout=5.0)
+        except Exception:
+            pass
 
 
 def _cli():
