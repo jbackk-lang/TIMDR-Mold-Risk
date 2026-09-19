@@ -20,12 +20,17 @@ Jedyna rzecz specyficzna dla tej domeny to argumenty fuse()
 jak w Solar-PV).
 """
 
+import os
+import threading
+import asyncio
+
 import numpy as np
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 from demo_scenarios import DEFAULT_THRESHOLDS, SCENARIOS, make_demo_data
-from timdr_mold_fusion import TIMDRMoldFusion
+from timdr_mold_fusion import TIMDRMoldFusion, VULNERABILITY_CLASSES
 from timdr_mold_predict import TIMDRMoldPredict, risk_level_label
+from ble_sensor import LiveReadingBuffer, scan_forever
 
 app = Flask(__name__)
 
@@ -34,13 +39,98 @@ predict = TIMDRMoldPredict()
 
 REQUIRED_FIELDS = ["temperature", "humidity"]
 
+# --- Czujnik Bluetooth na zywo (Xiaomi Mijia LYWSD03MMC, custom firmware) ---
+# Zobacz ble_sensor.py - UWAGA, parser nie byl testowany na prawdziwym
+# sprzecie w tym srodowisku (brak adaptera Bluetooth w sandboxie).
+ble_buffer = LiveReadingBuffer()
+_ble_thread = None
+_ble_stop_event = threading.Event()
+
+
+def _ble_thread_target():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(scan_forever(ble_buffer, stop_event=_ble_stop_event))
+    except Exception as exc:  # noqa: BLE001 - watek w tle, musi przezyc dowolny blad
+        ble_buffer.last_error = f"blad watku skanowania BLE: {exc}"
+    finally:
+        loop.close()
+
 
 @app.route("/")
 def index():
     return jsonify({
         "service": "TIMDR-Mold-Risk",
-        "endpoints": ["/api/health", "/api/scenarios", "/api/demo", "/api/analyze (POST)"],
+        "endpoints": [
+            "/dashboard",
+            "/api/health", "/api/scenarios", "/api/demo", "/api/analyze (POST)",
+            "/api/ble/start (POST)", "/api/ble/stop (POST)", "/api/ble/status", "/api/ble/live",
+        ],
     })
+
+
+@app.route("/dashboard")
+def dashboard():
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+
+
+@app.route("/api/ble/start", methods=["POST"])
+def api_ble_start():
+    global _ble_thread
+    try:
+        import bleak  # noqa: F401
+    except ImportError:
+        return jsonify({"error": "pakiet 'bleak' nie jest zainstalowany - uruchom: pip install bleak"}), 400
+
+    body = request.get_json(force=True, silent=True) or {}
+    mac = body.get("mac")
+    if mac:
+        ble_buffer.target_mac = mac
+
+    if _ble_thread is None or not _ble_thread.is_alive():
+        _ble_stop_event.clear()
+        ble_buffer.last_error = None
+        _ble_thread = threading.Thread(target=_ble_thread_target, daemon=True)
+        _ble_thread.start()
+
+    return jsonify({"status": "started", "target_mac": ble_buffer.target_mac})
+
+
+@app.route("/api/ble/stop", methods=["POST"])
+def api_ble_stop():
+    _ble_stop_event.set()
+    return jsonify({"status": "stopping"})
+
+
+@app.route("/api/ble/status")
+def api_ble_status():
+    try:
+        import bleak  # noqa: F401
+        bleak_available = True
+    except ImportError:
+        bleak_available = False
+
+    running = _ble_thread is not None and _ble_thread.is_alive()
+    last = None
+    if ble_buffer.readings:
+        unix_t, temp, hum, mac = ble_buffer.readings[-1]
+        last = {"unix_time": unix_t, "temperature": temp, "humidity": hum, "mac": mac}
+
+    return jsonify({
+        "running": running,
+        "bleak_available": bleak_available,
+        "readings_count": len(ble_buffer.readings),
+        "last_reading": last,
+        "last_error": ble_buffer.last_error,
+        "target_mac": ble_buffer.target_mac,
+    })
+
+
+@app.route("/api/ble/live")
+def api_ble_live():
+    t_hours, temps, hums = ble_buffer.as_series()
+    return jsonify({"t_hours": t_hours, "temperature": temps, "humidity": hums})
 
 
 @app.route("/api/health")
@@ -54,6 +144,11 @@ def api_scenarios():
         {"id": name, "description": desc, "default_threshold": DEFAULT_THRESHOLDS[name]}
         for name, desc in SCENARIOS.items()
     ])
+
+
+@app.route("/api/vulnerability-classes")
+def api_vulnerability_classes():
+    return jsonify(sorted(VULNERABILITY_CLASSES.keys()))
 
 
 @app.route("/api/demo")

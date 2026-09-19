@@ -186,7 +186,67 @@ skopiuj `timdr_mold_fusion.py` + `timdr_mold_predict.py` z nagłówkiem
   zgadywano współczynnika).
 - Brak walidacji na realnych danych (patrz wyżej) — priorytet numer 1
   do zrobienia przed jakimkolwiek użyciem produkcyjnym.
-- Brak dashboardu — `api.py` działa jako czyste REST API.
+- Dashboard: patrz sekcja "Dashboard" niżej — parser BLE nieprzetestowany
+  na prawdziwym sprzęcie w tym środowisku (patrz sekcja "Czujnik
+  Bluetooth").
+
+## Dashboard
+
+`dashboard.html` — panel w przeglądarce (serwowany przez `api.py` pod
+`/dashboard`, ten sam Flask, więc bez CORS): zakładki dla 4 scenariuszy
+demo (`demo_scenarios.py`) + zakładka "Czujnik na żywo (BLE)". Każda
+zakładka pokazuje: karty statusu (poziom ryzyka, health score, czas do
+widocznego wzrostu, margines RH-RHcrit), wykres `M(t)` z linią progu i
+zaznaczonymi anomaliami, wykres surowych czujników (temperatura/
+wilgotność), oraz panel diagnostyki operatora TIMDR
+(`twist`/`trend`/`anomalies`/`rhythm`/`fusion_score`) — wszystkie liczby
+pochodzą wprost z `/api/analyze`, nic nie jest liczone po stronie
+przeglądarki.
+
+Uruchomienie: `run.bat` (Windows) — instaluje zależności z
+`requirements.txt`, startuje `api.py` w osobnym oknie konsoli i otwiera
+`http://127.0.0.1:5002/dashboard` w domyślnej przeglądarce. Ręcznie:
+`python api.py`, potem otwórz ten URL sam.
+
+## Czujnik Bluetooth (Xiaomi Mijia LYWSD03MMC)
+
+Zakładka "Czujnik na żywo" w dashboardzie czyta dane z prawdziwego
+czujnika T/RH przez BLE (`ble_sensor.py`, biblioteka `bleak`) —
+`POST /api/ble/start` (opcjonalnie z `{"mac": "AA:BB:..."}` żeby
+filtrować do jednego urządzenia) uruchamia skanowanie w tle,
+`GET /api/ble/live` zwraca bufor odczytów w tym samym kształcie co
+`/api/demo`, więc dashboard analizuje je dokładnie tym samym
+`/api/analyze` co scenariusze syntetyczne.
+
+**Wymaganie sprzętowe:** sensor musi mieć wgrany **custom firmware**
+([pvvx/ATC_MiThermometer](https://github.com/pvvx/ATC_MiThermometer)),
+NIE fabryczny firmware Xiaomi — ten drugi szyfruje dane protokołem
+MiBeacon i wymaga "bindkey" z aplikacji Xiaomi Home, czego ten moduł
+świadomie nie obsługuje (zbyt zawodne do zaimplementowania bez dostępu
+do prawdziwego urządzenia i klucza). Custom firmware nadaje dane jawnie
+w Service Data pod UUID `0x181A`.
+
+**UWAGA UCZCIWOŚCI: parser (`ble_sensor.py::parse_atc1441`/`parse_pvvx`)
+NIE został zweryfikowany na prawdziwym sprzęcie w tym środowisku** —
+sandbox, w którym powstał, nie ma fizycznego adaptera Bluetooth. Układ
+bajtów odtworzono z pamięci na podstawie publicznie znanego formatu
+firmware pvvx/atc1441; sam parser ma testy jednostkowe na ręcznie
+skonstruowanych bajtach (sprawdzają tylko, że kod poprawnie odczytuje
+bajty W UKŁADZIE, KTÓRY SAM ZAŁOŻYŁEM — nie że ten układ zgadza się z
+prawdziwym sensorem). Przed zaufaniem odczytom na Twoim sprzęcie:
+
+```bash
+python ble_sensor.py --scan --debug
+```
+
+wypisze surowe bajty każdej odebranej reklamy oraz to, co z nich zostało
+odparsowane — porównaj z wyświetlaczem samego czujnika lub apką typu
+nRF Connect. Jeśli się nie zgadza, popraw `parse_atc1441`/`parse_pvvx` w
+`ble_sensor.py` (najbardziej prawdopodobny błąd: kolejność bajtów MAC
+albo big/little-endian liczb) i zostaw komentarz, która wersja została
+faktycznie zweryfikowana na sprzęcie i kiedy — ten sam wzorzec uczciwości
+co reszta tego repo (patrz sekcja "Walidacja na PRAWDZIWYCH danych
+DALTON" wyżej).
 
 ## Struktura
 

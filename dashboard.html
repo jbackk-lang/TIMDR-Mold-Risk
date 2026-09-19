@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TIMDR-Mold-Risk — Panel ryzyka pleśni</title>
+<style>
+    :root {
+        --bg-color: #0d0d11;
+        --panel-bg: #16161f;
+        --accent-blue: #4ea3ff;
+        --accent-gold: #ecc94b;
+        --accent-purple: #9f7aea;
+        --accent-red: #fc8181;
+        --accent-green: #48bb78;
+        --accent-orange: #ed8936;
+        --accent-teal: #38b2ac;
+        --text-color: #eee;
+        --text-muted: #a0aec0;
+        --border-color: #2d3748;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        background: var(--bg-color);
+        color: var(--text-color);
+        padding: 20px;
+        margin: 0;
+    }
+
+    h1 {
+        color: #fff;
+        font-size: 20px;
+        margin: 0 0 4px;
+    }
+
+    .subtitle {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 18px;
+    }
+
+    .tabs {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+    }
+
+    .tab-btn {
+        font-size: 12px;
+        padding: 7px 12px;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid var(--border-color);
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .tab-btn:hover { color: #fff; border-color: var(--accent-blue); }
+
+    .tab-btn.active {
+        background: rgba(78, 163, 255, 0.15);
+        border-color: var(--accent-blue);
+        color: var(--accent-blue);
+        font-weight: 600;
+    }
+
+    .tab-btn.live.active {
+        background: rgba(72, 187, 120, 0.15);
+        border-color: var(--accent-green);
+        color: var(--accent-green);
+    }
+
+    .panel {
+        background: var(--panel-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px 18px;
+        margin-bottom: 16px;
+    }
+
+    .panel-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .panel-title .sub { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .stat-card {
+        background: var(--panel-bg);
+        border: 1px solid var(--border-color);
+        border-left: 3px solid var(--accent-blue);
+        border-radius: 8px;
+        padding: 12px 14px;
+    }
+
+    .stat-label {
+        font-size: 11px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .stat-value {
+        font-size: 20px;
+        font-weight: 700;
+        color: #fff;
+        margin-top: 4px;
+    }
+
+    .stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    .chart-wrap {
+        position: relative;
+        height: 220px;
+        width: 100%;
+    }
+
+    .chart-wrap.small { height: 170px; }
+
+    .two-col {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 16px;
+    }
+
+    @media (max-width: 800px) {
+        .two-col { grid-template-columns: 1fr; }
+    }
+
+    .diag-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .diag-item .k { font-size: 11px; color: var(--text-muted); }
+    .diag-item .v { font-size: 15px; font-weight: 700; margin-top: 2px; }
+    .diag-item .s { font-size: 10px; color: var(--text-muted); }
+
+    .live-controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+    }
+
+    .live-controls input[type=text] {
+        background: #09090d;
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+        padding: 7px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        width: 200px;
+    }
+
+    button.action {
+        font-size: 12px;
+        padding: 8px 14px;
+        border-radius: 6px;
+        border: 1px solid var(--accent-blue);
+        background: rgba(78,163,255,0.12);
+        color: var(--accent-blue);
+        cursor: pointer;
+        font-weight: 600;
+    }
+
+    button.action:hover { background: rgba(78,163,255,0.22); }
+
+    button.action.stop { border-color: var(--accent-red); color: var(--accent-red); background: rgba(252,129,129,0.1); }
+    button.action.stop:hover { background: rgba(252,129,129,0.2); }
+
+    .status-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background: #718096;
+    }
+
+    .status-dot.on { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+    .status-dot.err { background: var(--accent-red); }
+
+    .caveat {
+        font-size: 11px;
+        color: var(--text-muted);
+        line-height: 1.5;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    select {
+        background: #09090d;
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+    }
+
+    .empty-state {
+        font-size: 12px;
+        color: var(--text-muted);
+        padding: 30px 10px;
+        text-align: center;
+    }
+</style>
+</head>
+<body>
+
+<h1>TIMDR-Mold-Risk — Panel ryzyka pleśni</h1>
+<div class="subtitle">Model VTT (Hukka &amp; Viitanen 1999/2004) · operator TIMDR (twist/trend/anomalies/rhythm/fusion_score)</div>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="stat-grid" id="statGrid"></div>
+
+<div class="panel">
+    <div class="panel-title">
+        <span>Indeks wzrostu pleśni M(t) — 0-6, próg widoczności zaznaczony linią</span>
+        <span class="sub" id="chartRangeLabel"></span>
+    </div>
+    <div class="chart-wrap"><canvas id="moldChart"></canvas></div>
+</div>
+
+<div class="two-col">
+    <div class="panel">
+        <div class="panel-title"><span>Czujniki: temperatura (°C) i wilgotność względna (%RH)</span></div>
+        <div class="chart-wrap small"><canvas id="sensorChart"></canvas></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title"><span>Diagnostyka sygnału (operator TIMDR)</span></div>
+        <div class="diag-grid" id="diagGrid"></div>
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border-color);">
+            <div class="k" style="font-size:11px;color:var(--text-muted);">fusion_score</div>
+            <div class="v" id="fusionScoreVal" style="font-size:18px;font-weight:700;">—</div>
+        </div>
+    </div>
+</div>
+
+<div class="panel" id="liveControlsPanel" style="display:none;">
+    <div class="panel-title"><span>Czujnik Bluetooth na żywo — Xiaomi Mijia LYWSD03MMC</span></div>
+    <div class="live-controls">
+        <span id="bleStatusDot"><span class="status-dot"></span><span id="bleStatusText">nieznany</span></span>
+        <input type="text" id="bleMacInput" placeholder="MAC (opcjonalnie, np. A4:C1:38:AA:BB:CC)">
+        <button class="action" id="bleStartBtn">Start skanowania</button>
+        <button class="action stop" id="bleStopBtn">Stop</button>
+        <span id="bleReadingsCount" style="font-size:11px;color:var(--text-muted);"></span>
+    </div>
+    <div class="caveat">
+        Wymaga sensora z wgranym <strong>custom firmware</strong> (pvvx lub atc1441 —
+        <a href="https://github.com/pvvx/ATC_MiThermometer" target="_blank" style="color:var(--accent-blue);">ATC_MiThermometer</a>),
+        NIE fabrycznego firmware Xiaomi (ten szyfruje dane i wymaga bindkey — nieobsługiwane).
+        Parser formatu BLE (<code>ble_sensor.py</code>) nie został zweryfikowany na prawdziwym sprzęcie
+        w środowisku, w którym powstał — uruchom <code>python ble_sensor.py --scan --debug</code>
+        i porównaj odczyt z wyświetlaczem czujnika, zanim zaufasz liczbom tutaj.
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<script>
+(function(){
+    "use strict";
+
+    const RISK_COLORS = ["#48bb78","#48bb78","#ecc94b","#ed8936","#fc8181","#fc8181","#fc8181"];
+
+    let scenarios = [];
+    let activeTab = null; // scenario id string, or "__live__"
+    let moldChart = null;
+    let sensorChart = null;
+    let liveTimer = null;
+
+    function el(tag, attrs, children) {
+        const e = document.createElement(tag);
+        Object.entries(attrs || {}).forEach(([k, v]) => {
+            if (k === "text") e.textContent = v;
+            else if (k === "html") e.innerHTML = v;
+            else e.setAttribute(k, v);
+        });
+        (children || []).forEach(c => e.appendChild(c));
+        return e;
+    }
+
+    async function fetchJSON(url, opts) {
+        const r = await fetch(url, opts);
+        if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            throw new Error(body.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+    }
+
+    function buildTabs() {
+        const tabsEl = document.getElementById("tabs");
+        tabsEl.innerHTML = "";
+        scenarios.forEach(s => {
+            const btn = el("button", {class: "tab-btn", "data-id": s.id, text: s.description});
+            btn.addEventListener("click", () => selectTab(s.id));
+            tabsEl.appendChild(btn);
+        });
+        const liveBtn = el("button", {class: "tab-btn live", "data-id": "__live__", text: "📡 Czujnik na żywo (BLE)"});
+        liveBtn.addEventListener("click", () => selectTab("__live__"));
+        tabsEl.appendChild(liveBtn);
+    }
+
+    function markActiveTab(id) {
+        document.querySelectorAll(".tab-btn").forEach(b => {
+            b.classList.toggle("active", b.getAttribute("data-id") === id);
+        });
+    }
+
+    async function selectTab(id) {
+        activeTab = id;
+        markActiveTab(id);
+        if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+        document.getElementById("liveControlsPanel").style.display = (id === "__live__") ? "block" : "none";
+
+        if (id === "__live__") {
+            await refreshBleStatus();
+            await loadAndRenderLive();
+            liveTimer = setInterval(async () => {
+                await refreshBleStatus();
+                await loadAndRenderLive();
+            }, 4000);
+        } else {
+            await loadAndRenderScenario(id);
+        }
+    }
+
+    async function loadAndRenderScenario(scenarioId) {
+        document.getElementById("chartRangeLabel").textContent = "ładowanie...";
+        const demo = await fetchJSON(`/api/demo?scenario=${encodeURIComponent(scenarioId)}`);
+        const analysis = await fetchJSON("/api/analyze", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                t_hours: demo.t_hours,
+                temperature: demo.temperature,
+                humidity: demo.humidity,
+                threshold: demo.default_threshold || 3.0,
+            }),
+        });
+        render(demo, analysis, `scenariusz: ${scenarioId}, ${(demo.t_hours.length / 24).toFixed(0)} dni`);
+    }
+
+    async function loadAndRenderLive() {
+        const live = await fetchJSON("/api/ble/live");
+        if (!live.t_hours || live.t_hours.length < 3) {
+            document.getElementById("chartRangeLabel").textContent = "czekam na dane z czujnika...";
+            renderEmpty();
+            return;
+        }
+        const analysis = await fetchJSON("/api/analyze", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                t_hours: live.t_hours,
+                temperature: live.temperature,
+                humidity: live.humidity,
+                threshold: 3.0,
+            }),
+        });
+        render(live, analysis, `czujnik na żywo, ${live.t_hours.length} odczytów`);
+    }
+
+    function renderEmpty() {
+        document.getElementById("statGrid").innerHTML =
+            '<div class="empty-state" style="grid-column:1/-1;">Brak jeszcze danych z czujnika BLE — uruchom skanowanie powyżej i poczekaj na pierwsze odczyty (potrzeba min. 3, żeby policzyć indeks).</div>';
+        document.getElementById("diagGrid").innerHTML = "";
+        document.getElementById("fusionScoreVal").textContent = "—";
+        if (moldChart) { moldChart.destroy(); moldChart = null; }
+        if (sensorChart) { sensorChart.destroy(); sensorChart = null; }
+    }
+
+    function fmtHours(h) {
+        if (h === null || h === undefined) return "brak wzrostu w tym oknie";
+        if (h <= 0) return "już przekroczono";
+        const days = h / 24;
+        return days >= 1 ? `${days.toFixed(1)} dni` : `${h.toFixed(1)} godz.`;
+    }
+
+    function render(sensorData, a, rangeLabel) {
+        document.getElementById("chartRangeLabel").textContent = rangeLabel;
+
+        const level = a.current_risk_level;
+        const color = RISK_COLORS[level] || "#fff";
+        const lastMargin = a.margin && a.margin.length ? a.margin[a.margin.length - 1] : null;
+
+        document.getElementById("statGrid").innerHTML = "";
+        const cards = [
+            {label: "Poziom ryzyka", value: a.current_risk_label.split(" - ")[0], sub: `M = ${a.M[a.M.length-1].toFixed(2)} / 6`, color: color},
+            {label: "Health score", value: `${(a.health_score * 100).toFixed(0)}%`, sub: `próg widoczności: ${a.threshold}`, color: "var(--accent-gold)"},
+            {label: "Do widocznego wzrostu", value: fmtHours(a.time_to_visible_growth_hours), sub: "ekstrapolacja z ostatniego tygodnia", color: "var(--accent-purple)"},
+            {label: "Margines RH-RHcrit", value: lastMargin === null ? "—" : `${lastMargin >= 0 ? "+" : ""}${lastMargin.toFixed(1)} pp`, sub: lastMargin >= 0 ? "powyżej progu krytycznego" : "poniżej progu krytycznego", color: lastMargin >= 0 ? "var(--accent-red)" : "var(--accent-green)"},
+        ];
+        const grid = document.getElementById("statGrid");
+        cards.forEach(c => {
+            const card = el("div", {class: "stat-card", style: `border-left-color:${c.color};`});
+            card.appendChild(el("div", {class: "stat-label", text: c.label}));
+            card.appendChild(el("div", {class: "stat-value", style: `color:${c.color};`, text: c.value}));
+            card.appendChild(el("div", {class: "stat-sub", text: c.sub}));
+            grid.appendChild(card);
+        });
+
+        // diagnostics
+        const n = a.M.length;
+        const lastSlope = a.trend_slopes[a.trend_slopes.length - 1] || 0;
+        const trendLabel = Math.abs(lastSlope) < 1e-5 ? "stabilny" : (lastSlope > 0 ? "rosnący" : "malejący");
+        const diagItems = [
+            {k: "twist()", v: `${a.twist_idx.length} / ${n} pkt`, s: "z > 3.5"},
+            {k: "anomalies()", v: `${a.anomaly_idx.length} / ${n} pkt`, s: "z > 3.0"},
+            {k: "trend()", v: trendLabel, s: `nachylenie=${lastSlope.toExponential(2)}`},
+            {k: "rhythm()", v: a.rhythm_periods.length ? `${a.rhythm_periods.length} okresy` : "brak", s: `score=${a.rhythm_score.toFixed(2)}`},
+        ];
+        const diagGrid = document.getElementById("diagGrid");
+        diagGrid.innerHTML = "";
+        diagItems.forEach(d => {
+            const item = el("div", {class: "diag-item"});
+            item.appendChild(el("div", {class: "k", text: d.k}));
+            item.appendChild(el("div", {class: "v", text: d.v}));
+            item.appendChild(el("div", {class: "s", text: d.s}));
+            diagGrid.appendChild(item);
+        });
+        document.getElementById("fusionScoreVal").textContent = a.fusion_score.toFixed(2);
+        document.getElementById("fusionScoreVal").style.color = a.fusion_score > 2 ? "var(--accent-red)" : (a.fusion_score > 1 ? "var(--accent-gold)" : "var(--accent-green)");
+
+        // charts
+        const labelsDays = sensorData.t_hours.map(h => (h / 24));
+        const anomalySet = new Set(a.anomaly_idx);
+        const pointColors = a.M.map((_, i) => anomalySet.has(i) ? "#fc8181" : "rgba(0,0,0,0)");
+        const pointRadius = a.M.map((_, i) => anomalySet.has(i) ? 3 : 0);
+
+        const moldCtx = document.getElementById("moldChart").getContext("2d");
+        if (moldChart) moldChart.destroy();
+        moldChart = new Chart(moldCtx, {
+            type: "line",
+            data: {
+                labels: labelsDays,
+                datasets: [
+                    {
+                        label: "M(t)",
+                        data: a.M,
+                        borderColor: "#4ea3ff",
+                        backgroundColor: "rgba(78,163,255,0.08)",
+                        borderWidth: 2,
+                        pointRadius: pointRadius,
+                        pointBackgroundColor: pointColors,
+                        fill: true,
+                        tension: 0.15,
+                    },
+                    {
+                        label: `próg (${a.threshold})`,
+                        data: a.M.map(() => a.threshold),
+                        borderColor: "#ecc94b",
+                        borderDash: [6, 5],
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        fill: false,
+                    },
+                ],
+            },
+            options: chartOptions("dni", "indeks M (0-6)", 0, 6),
+        });
+
+        const sensorCtx = document.getElementById("sensorChart").getContext("2d");
+        if (sensorChart) sensorChart.destroy();
+        sensorChart = new Chart(sensorCtx, {
+            type: "line",
+            data: {
+                labels: labelsDays,
+                datasets: [
+                    {
+                        label: "temperatura (°C)",
+                        data: sensorData.temperature,
+                        borderColor: "#ed8936",
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        yAxisID: "yTemp",
+                        tension: 0.1,
+                    },
+                    {
+                        label: "wilgotność (%RH)",
+                        data: sensorData.humidity,
+                        borderColor: "#38b2ac",
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        yAxisID: "yHum",
+                        tension: 0.1,
+                    },
+                ],
+            },
+            options: dualAxisChartOptions(),
+        });
+    }
+
+    function chartOptions(xLabel, yLabel, yMin, yMax) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {mode: "index", intersect: false},
+            plugins: {
+                legend: {labels: {color: "#a0aec0", font: {size: 11}}},
+            },
+            scales: {
+                x: {ticks: {color: "#a0aec0", font: {size: 10}}, grid: {color: "#2d3748"}, title: {display: true, text: xLabel, color: "#a0aec0", font: {size: 10}}},
+                y: {min: yMin, max: yMax, ticks: {color: "#a0aec0", font: {size: 10}}, grid: {color: "#2d3748"}, title: {display: true, text: yLabel, color: "#a0aec0", font: {size: 10}}},
+            },
+        };
+    }
+
+    function dualAxisChartOptions() {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {mode: "index", intersect: false},
+            plugins: {legend: {labels: {color: "#a0aec0", font: {size: 11}}}},
+            scales: {
+                x: {ticks: {color: "#a0aec0", font: {size: 10}}, grid: {color: "#2d3748"}},
+                yTemp: {position: "left", ticks: {color: "#ed8936", font: {size: 10}}, grid: {color: "#2d3748"}, title: {display: true, text: "°C", color: "#ed8936", font: {size: 10}}},
+                yHum: {position: "right", ticks: {color: "#38b2ac", font: {size: 10}}, grid: {drawOnChartArea: false}, title: {display: true, text: "%RH", color: "#38b2ac", font: {size: 10}}},
+            },
+        };
+    }
+
+    async function refreshBleStatus() {
+        const s = await fetchJSON("/api/ble/status");
+        const dot = document.querySelector("#bleStatusDot .status-dot");
+        const text = document.getElementById("bleStatusText");
+        dot.className = "status-dot" + (s.running ? " on" : (s.last_error ? " err" : ""));
+        if (!s.bleak_available) {
+            text.textContent = "brak biblioteki 'bleak' (pip install bleak)";
+        } else if (s.running) {
+            text.textContent = `skanuję${s.target_mac ? " (" + s.target_mac + ")" : ""}...`;
+        } else if (s.last_error) {
+            text.textContent = `błąd: ${s.last_error}`;
+        } else {
+            text.textContent = "zatrzymany";
+        }
+        document.getElementById("bleReadingsCount").textContent = `${s.readings_count} odczytów w buforze`;
+    }
+
+    document.getElementById("bleStartBtn").addEventListener("click", async () => {
+        const mac = document.getElementById("bleMacInput").value.trim();
+        await fetchJSON("/api/ble/start", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(mac ? {mac} : {}),
+        }).catch(e => alert(e.message));
+        await refreshBleStatus();
+    });
+
+    document.getElementById("bleStopBtn").addEventListener("click", async () => {
+        await fetchJSON("/api/ble/stop", {method: "POST"}).catch(e => alert(e.message));
+        await refreshBleStatus();
+    });
+
+    async function init() {
+        scenarios = await fetchJSON("/api/scenarios");
+        buildTabs();
+        await selectTab(scenarios[0].id);
+    }
+
+    init().catch(e => {
+        document.getElementById("statGrid").innerHTML =
+            `<div class="empty-state" style="grid-column:1/-1;color:var(--accent-red);">Błąd ładowania: ${e.message} — czy api.py jest uruchomione?</div>`;
+    });
+})();
+</script>
+
+</body>
+</html>
